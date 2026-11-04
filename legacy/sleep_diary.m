@@ -1,10 +1,19 @@
+%% ---- Local settings (edit before running; do not commit real paths) ----
+data_dir   = 'PATH/TO/DATA';     % folder with the exported HowRU files
+output_dir = 'PATH/TO/OUTPUT';   % where summary files are written
+study_sheet = 'StudySheet.xlsx'; % study tracking sheet inside data_dir
+% Excluded participant IDs: one per line in a local, untracked text file
+exclude_ids = strtrim(readlines(fullfile(data_dir, 'excluded_ids.txt')));
+exclude_ids = exclude_ids(exclude_ids ~= "");
+%% ----------------------------------------------------------------------
+
 warning('off', 'all')
 %import
 %input path to each analyzed csv
-T_study = readtable('PATH/REDACTED');
-T_morning = readtable('PATH/REDACTED');
-T_midday = readtable('PATH/REDACTED');
-T_evening = readtable('PATH/REDACTED');
+T_study = readtable(fullfile(data_dir, study_sheet));
+T_morning = readtable(fullfile(data_dir, 'sleep_diary_morning.csv'));
+T_midday = readtable(fullfile(data_dir, 'Midday_mood_check.csv'));
+T_evening = readtable(fullfile(data_dir, 'sleep_diary_evening.csv'));
 no_need = {'id', 'user_id','started_at_conv_gmt', 'finished_at_conv_gmt', 'waketime_conv_gmt', 'bedtime_conv_gmt'};
 %setup for morning
 T_morning(:,no_need) = [];
@@ -27,10 +36,7 @@ for i = 1:length(T_evening.user)
     T_evening.user(i) = string(c(end-2:end));
 end
 user = unique(T_morning.user);
-user = erase(user,exclude_ids);
-for i = 1:3
-    user(17) = [];
-end
+user = setdiff(user, exclude_ids); % drop excluded participants
 T_morning.started_at_conv_pst = datetime(T_morning.started_at /1000, 'convertfrom','posixtime','TimeZone','America/Los_Angeles', 'Format','dd-MMM-yyyy HH:mm:ss');
 T_morning.finished_at_conv_pst = datetime(T_morning.finished_at /1000, 'convertfrom','posixtime','TimeZone','America/Los_Angeles', 'Format','dd-MMM-yyyy HH:mm:ss');
 T_midday.started_at_conv_pst = datetime(T_midday.started_at /1000, 'convertfrom','posixtime','TimeZone','America/Los_Angeles', 'Format','dd-MMM-yyyy HH:mm:ss');
@@ -133,7 +139,7 @@ for i = 1:width(final)
         final_update{:,name} = final{:,cols{i}};
     end
 end
-writetable(final_update, "PATH/REDACTED")
+writetable(final_update, fullfile(output_dir, "sleep_diary_ema_concatenated.csv"))
 %%
 sleep_summary = table;
 for i = 1:length(user)
