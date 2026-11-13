@@ -20,6 +20,10 @@ function [copy,tz_check] = add_local_time_T1D(copy,file_path)
 %           local = shown,          PST = shown - offset
 %   (offset = hours ahead of Pacific: MST 1, CST 2, EST 3; PST 0)
 %
+%   NOTE (Nov 2026): conversion now ignores phone_tz_check. bed/wake shown by the
+%   pipeline are always taken as PST and local = PST + offset for every participant.
+%   The phone check below is still computed and written to the check file for reference only.
+%
 %   Which case applies is decided per participant from the data: people open the
 %   morning diary shortly after the wake time they report. started_at is the true
 %   moment the diary was opened, so
@@ -34,7 +38,7 @@ function [copy,tz_check] = add_local_time_T1D(copy,file_path)
 %   TZ_CHECK (one row per SID) is also written, deidentified, to
 %   <file_path>\Sleep_diary\Sleep_diary_morning_timezone_check.xlsx
 
-PHONE_ON_PACIFIC  = [];     % SIDs to force into "phone set to Pacific", e.g. [<SID>]
+PHONE_ON_PACIFIC  = [];     % SIDs to force into "phone set to Pacific", e.g. [SID]
 PHONE_ON_OWN_ZONE = [];     % SIDs to force into "phone on own zone"
 MIN_AGREE = 0.6;            % share of days that must agree, otherwise "mixed - check by hand"
 
@@ -99,10 +103,10 @@ for s = 1:numel(SIDs)
     copy.phone_tz_check(rows) = group;
     copy.offset_h(rows)       = off;
     if isnan(off), continue, end
-    if ~startsWith(group,"phone set to Pacific")                        % shown = Pacific -> local
-        copy.bed_time(rows)  = copy.bed_time(rows)  + hours(off);
-        copy.wake_time(rows) = copy.wake_time(rows) + hours(off);
-    end                                                                 % phone on Pacific: shown = local already
+    % shown = Pacific (PST) for everyone -> local = PST + offset.
+    % phone_tz_check is informational only and NOT used for the conversion.
+    copy.bed_time(rows)  = copy.bed_time(rows)  + hours(off);
+    copy.wake_time(rows) = copy.wake_time(rows) + hours(off);
 end
 
 need_look = contains(tz_check.phone_tz_check,["mixed","no time zone"]);
@@ -127,4 +131,4 @@ elseif startsWith(z,["M","AMERICA/DENVER","AMERICA/PHOENIX"]),   h = 1;
 elseif startsWith(z,["C","AMERICA/CHICAGO"]),                    h = 2;
 elseif startsWith(z,["E","AMERICA/NEW_YORK"]),                   h = 3;
 end
-end
+end

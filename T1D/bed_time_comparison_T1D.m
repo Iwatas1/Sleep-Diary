@@ -419,4 +419,4 @@ opts.EmptyLineRule = "read";
 opts = setvaropts(opts, "isoDate", "WhitespaceRule", "preserve");
 opts = setvaropts(opts, ["sleepSummaryId", "isoDate", "type"], "EmptyFieldRule", "auto");
 out = readtable(filename, opts);
-end
+end

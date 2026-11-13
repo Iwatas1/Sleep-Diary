@@ -1,4 +1,4 @@
-function [new,modify_t] = EMA_to_sleep_diary_morning(EMA_morning,forget_morning,study_sd,file_path)
+function [new_out,modify_t] = EMA_to_sleep_diary_morning(EMA_morning,forget_morning,study_sd,file_path)
 col_names = string(forget_morning.Properties.VariableNames);
 for i = 1:height(forget_morning)
     for j = 1:length(col_names)
@@ -9,67 +9,6 @@ for i = 1:height(forget_morning)
         end
     end
 end
-%{
-time = readtable(append(file_path,'\demographics\T1D_timezones.xlsx'));
-time.TZ = string(time.TZ);
-time.SID = string(time.SID);
-cst = time{contains(time.TZ,["C","c"]),"SID"};
-est = time{contains(time.TZ,["E","e"]),"SID"};
-mst = time{contains(time.TZ,["M","m"]),"SID"};
-zones = {cst,est,mst};
-area = ["America/Chicago","America/New_York","America/Denver"];
-EMA_morning.wake_time = datetime(EMA_morning.get_out_of_bed / 1000, "convertfrom","posixtime","Format","dd-MMM-uuuu HH:mm","TimeZone","local");
-EMA_morning.bed_time = datetime(EMA_morning.first_sleep / 1000, "convertfrom","posixtime","Format","dd-MMM-uuuu HH:mm","TimeZone","local");
-wake_cell = num2cell(EMA_morning.wake_time);
-bed_cell = num2cell(EMA_morning.bed_time);
-
-for i = 1:length(zones)
-    % Find matching indices
-    idx = ismember(EMA_morning.user, zones{i});
-    
-    if any(idx)
-        % Extract the matched elements as a sub-cell array
-        sub_wake = wake_cell(idx);
-        sub_bed = bed_cell(idx);
-        
-        % Loop through the subset to change individual timezones
-        for j = 1:length(sub_wake)
-            sub_wake{j}.TimeZone = area(i);
-            sub_bed{j}.TimeZone = area(i);
-        end
-        
-        % Write the modified cells back to the main cell arrays
-        wake_cell(idx) = sub_wake;
-        bed_cell(idx) = sub_bed;
-    end
-end
-
-% 2. Store the cell arrays back into your table
-EMA_morning.wake_time = wake_cell;
-EMA_morning.bed_time = bed_cell;
-EMA_morning.minutes_up_night(isnan(EMA_morning.minutes_up_night)) = 0;
-modify_t = table;
-EMA_morning.date = datetime(EMA_morning.started_at/1000,"convertfrom","posixtime","Format","dd-MMM-yyyy","Timezone","local");
-date_cell = num2cell(EMA_morning.date);
-for i = 1:length(zones)
-    % Find matching indices
-    idx = ismember(EMA_morning.user, zones{i});
-    
-    if any(idx)
-        % Extract the matched elements as a sub-cell array
-        sub_date = date_cell(idx);
-        
-        % Loop through the subset to change individual timezones
-        for j = 1:length(sub_date)
-            sub_date{j}.TimeZone = area(i);
-        end
-        
-        % Write the modified cells back to the main cell arrays
-        date_cell(idx) = sub_date;
-    end
-end
-EMA_morning.date = datetime(string(date_cell));
-%}
 EMA_morning.wake_time = datetime(EMA_morning.get_out_of_bed / 1000, "convertfrom","posixtime","Format","dd-MMM-uuuu HH:mm","TimeZone","local");
 EMA_morning.bed_time = datetime(EMA_morning.first_sleep / 1000, "convertfrom","posixtime","Format","dd-MMM-uuuu HH:mm","TimeZone","local");
 EMA_morning.date = datetime(EMA_morning.started_at/1000,"convertfrom","posixtime","Format","dd-MMM-yyyy","Timezone","local");
@@ -250,4 +189,4 @@ writetable(cmp,       xl,'Sheet','sleep_comparison');
 writetable(muse_off,  xl,'Sheet','MUSE_off');
 writetable(garmin_off,xl,'Sheet','GARMIN_off');
 writetable(new_out,append(file_path,'\T1D master data.xlsx'),'Sheet','Sleep Diary Morning','WriteMode','overwritesheet');
-end
+end

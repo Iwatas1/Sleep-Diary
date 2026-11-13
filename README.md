@@ -13,7 +13,7 @@ your local data folder before running anything.
 |---|---|---|
 | `PSF/` | ongoing study | RA checking is still in progress; the code also refreshes the RA workbook each run |
 | `K08/` | completed study | RA checks are final; the RA workbook is only read |
-| `T1D/` | multi-time-zone study | adds local vs PST times and a Garmin / Muse bed-wake comparison |
+| `T1D/` | multi-time-zone study | morning diary pipeline with time zone handling and device comparison |
 | `legacy/` | — | original single-script version, kept for reference |
 
 Each study folder is self-contained (put the folder on the MATLAB path / in `Sleep_diary\codes`).
@@ -28,7 +28,9 @@ EMA_to_sleep_diary_morning
    match diaries to study days (latest submission wins on duplicates)
    fix_sleep_inputs + switch rules    automatic AM/PM and bed/wake swap fixes
    apply_RA_fix (PSF) / apply_RA_fix_K08 (K08)   overwrite with RA-revised times
-   12 h rule, weekly averages, std, z-score, residual, midpoint
+   12 h rule
+   bed_time_comparison_<study>         Garmin / Muse vs sleep diary (see Time zones)
+   weekly averages, std, z-score, residual, midpoint
 EMA_to_sleep_diary_evening
    match diaries to study days, nap AM/PM fixes, long + wide tables
 just_sleep_diary.m    driver script (converted from the live script; outputs removed)
@@ -63,28 +65,40 @@ RAs check the times by hand in a workbook in `SleepDiaryDataCheck` (newest `.xls
 `NEW SW# CLEANED`, columns suffixed `_2`–`_8`). For SID-weeks in both batches the `NEW` version
 is used. The workbook is read only.
 
-## T1D: time zones and device comparison
+## Time zones and device check
 
-Participants live in different US time zones (time zone sheet `demographics\T1D_timezones.xlsx`,
-column `TZ` = pst / mst / cst / est).
+The app saves the true moment of a typed time, and the pipeline shows it in Pacific time (PST).
+For participants in another zone, local = PST + offset (MST 1, CST 2, EST 3).
 
-- `add_local_time_T1D.m` builds `bed_time_local` / `wake_time_local` (participant clock) next to
-  `bed_time` / `wake_time` (PST).
-- `bed_time_comparison_T1D.m` pulls Garmin (Labfront `garmin-connect-sleep-summary`) and Muse
-  (largest `_ss.csv` per night) bed/wake, converts their unix timestamps to the participant's zone
-  and compares them with the device's own clock (`isoDate`, Muse `times`). Nights more than
-  30 min / 1 h off are flagged (`GARMIN_/MUSE_mismatch_30min/1hr`); flagged nights are then compared
-  with the diary local and PST times (`*_diary_closer`).
-- In `EMA_to_sleep_diary_morning.m` the midpoint and average bed/wake times use local time,
-  except on nights where every available device says the diary PST time fits better
-  (`calc_clock = "pst"`). Only `bed_time_PST` / `wake_time_PST` stay in PST in the xlsx.
-- `Sleep_diary_morning_long.xlsx` gets three extra sheets: `sleep_comparison`, `MUSE_off`,
-  `GARMIN_off`. These are not deidentified (full dates and unix timestamps); keep them on the lab
-  server.
+- `add_local_time_<study>.m` reads the time zone sheet (`SID`, zone code) and shifts bed/wake to
+  local time **before** the automatic fixes, so their clock-hour rules work on the participant's
+  own clock. It adds `time_zone` and `offset_h`. Blank zones are treated as PST.
+- PSF switches back to PST before the RA fix (the RA workbook is in PST), then adds
+  `first_sleep_local` / `get_out_of_bed_local`.
+- `bed_time_comparison_<study>.m` pulls Garmin sleep summary times and Muse `_ss` times, converts
+  their unix timestamps to the participant's zone, and compares them with the device's own clock
+  (`GARMIN_/MUSE_mismatch_30min/1hr`) and with diary local vs diary PST (`*_diary_closer`).
+  - Garmin: sleep = `unixTimestampInMs`, wake = sleep + `durationInMs` + `awakeDurationInMs`,
+    matched on `calendarDate` (the wake-up morning).
+  - Muse: largest `_ss` file per night, W epochs removed; bed/wake = first/last sleep epoch.
+    Nights are matched on the local wake-up date. Older files without a `timestamps` column are
+    rebuilt from the file name + `times` and left out of the device clock check.
+- `calc_clock` (per night) is `pst` only when every device with a 1-hr flag says diary PST is
+  closer; otherwise `local`. Midpoint, `ave_bedtime_local` and `ave_waketime_local` use that clock.
+- PSF also writes `RA_timezone_check`: RA-revised nights for non-PST participants, with
+  `RA_entered_local = 1` when a device suggests the RA typed local time into the PST column.
+- The PSF RA workbook gets `time_zone` and `offset_h` columns after `SID` (times stay PST).
+  Existing CLEANED sheets get the columns inserted through Excel, so RA edits and formatting stay.
+- K08 treats everyone as PST, so it runs the device comparison only.
+
+Extra sheets in `Sleep_diary_morning_long.xlsx`: `sleep_comparison`, `MUSE_off`, `GARMIN_off`
+(and `RA_timezone_check` for PSF). These keep full dates and unix timestamps.
 
 ## Deidentification
 
-All `.xlsx` outputs go through `deidentify_output.m`:
+Files that stay on the lab server may keep full dates. In PSF, set `DEID = true` in
+`EMA_to_sleep_diary_morning.m` (or run `deidentify_output.m` on a copy) before sharing anything
+outside the lab. `deidentify_output.m` does:
 
 | Column | Output |
 |---|---|

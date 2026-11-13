@@ -88,6 +88,10 @@ sleep_diary_long(isnat(sleep_diary_long.date),:) = missing_t;
 sleep_diary_long(:,"date") = [];
 sleep_diary_long.sleep_duration_in_mins = minutes(sleep_diary_long.sleep_duration);
 copy = sleep_diary_long;
+
+% ---- convert bed/wake to the participant's local time BEFORE the fixes ------
+% (clock-hour rules below then work on their own clock; see add_local_time_PSF)
+copy = add_local_time_PSF(copy,file_path);
 modify_t = table;
 [copy,modify_t] = fix_sleep_inputs(copy,modify_t,T_study,"");
 early_bed = and(hour(copy.first_sleep_pst) <= 19, hour(copy.first_sleep_pst) > 4);
@@ -110,6 +114,12 @@ t.sleep_duration = new_wake - new_bed -minutes(t.fall_asleep_minutes) - minutes(
 t.sleep_duration_in_mins = minutes(t.sleep_duration);
 copy(copy.sleep_duration_in_mins > 60*24,:) = t;
 
+% ---- back to Pacific (PST) before the RA fix --------------------------------
+% RA workbook times are Pacific, so the RA fix and 12 h rule run on PST
+known = ~isnan(copy.offset_h);
+copy.first_sleep_pst(known)    = copy.first_sleep_pst(known)    - hours(copy.offset_h(known));
+copy.get_out_of_bed_pst(known) = copy.get_out_of_bed_pst(known) - hours(copy.offset_h(known));
+
 % ---- RA manual check (SleepDiaryDataCheck folder) -------------------------
 % Overwrite bed/wake times with the RA-revised values (only rows the RA
 % changed) and recalculate sleep duration. Log: Sleep_diary\Sleep_diary_morning_RA_fix_log.xlsx
@@ -131,9 +141,60 @@ if any(copy.sleep_duration_in_mins < 0)
     warning('EMA_to_sleep_diary_morning: %d row(s) have negative sleep duration after all fixes. See modification details.', ...
         sum(copy.sleep_duration_in_mins < 0));
 end
-writetable(deidentify_output(modify_t),append(file_path,'\Sleep_diary\Sleep_diary_morning_modification_details.xlsx'),'WriteMode','replacefile')
+% ---- local clock columns (PST + offset) -------------------------------------
+known = ~isnan(copy.offset_h);
+copy.first_sleep_local    = NaT(height(copy),1);
+copy.get_out_of_bed_local = NaT(height(copy),1);
+copy.first_sleep_local(known)    = copy.first_sleep_pst(known)    + hours(copy.offset_h(known));
+copy.get_out_of_bed_local(known) = copy.get_out_of_bed_pst(known) + hours(copy.offset_h(known));
+
+% ---- device comparison (Garmin / Muse) before the averages -------------------
+% decides, per night, which diary clock the midpoint/averages use
+[cmp,muse_off,garmin_off] = bed_time_comparison_PSF(copy,file_path);
+g_c = string(cmp.GARMIN_diary_closer);  m_c = string(cmp.MUSE_diary_closer);
+has_any = g_c ~= "" | m_c ~= "";
+all_pst = has_any & (g_c == "pst" | g_c == "") & (m_c == "pst" | m_c == "");
+keys = ["SID","StudyWeek","Date"];
+copy.calc_clock = repmat("local",height(copy),1);
+copy.calc_clock(ismember(copy(:,keys),cmp(all_pst,keys))) = "pst";
+% bed/wake used for midpoint and averages: local, or PST where all devices say pst
+copy.bed_calc  = copy.first_sleep_local;   copy.wake_calc = copy.get_out_of_bed_local;
+use_pst = copy.calc_clock == "pst" | ~known;
+copy.bed_calc(use_pst)  = copy.first_sleep_pst(use_pst);
+copy.wake_calc(use_pst) = copy.get_out_of_bed_pst(use_pst);
+fprintf('Sleep diary: %d night(s) use PST for midpoint/averages\n', sum(copy.calc_clock == "pst"));
+
+% ---- RA time zone check (flag only, nothing is changed) ----------------------
+% RA values are treated as PST. On a non-PST SID, if a device whose own clock is fine
+% (mismatch_1hr == 0) is closer to diary PST than diary local, the RA most likely
+% typed the participant's LOCAL time -> RA_entered_local = 1
+cmp = outerjoin(cmp,copy(:,[keys "calc_clock"]),"Keys",keys,"MergeKeys",true,"Type","left");
+cmp.RA_changed = strings(height(cmp),1);
+cmp.RA_status  = strings(height(cmp),1);
+if ~isempty(ra_log)
+    [hit,loc] = ismember(cmp(:,["SID","StudyWeek","Day"]),ra_log(:,["SID","StudyWeek","Day"]));
+    cmp.RA_changed(hit) = ra_log.changed(loc(hit));
+    cmp.RA_status(hit)  = ra_log.status(loc(hit));
+end
+non_pst = upper(strtrim(string(cmp.time_zone))) ~= "PST";
+g_says_pst = cmp.GARMIN_diary_closer_all == "pst" & cmp.GARMIN_mismatch_1hr == 0;
+m_says_pst = cmp.MUSE_diary_closer_all   == "pst" & cmp.MUSE_mismatch_1hr   == 0;
+g_says_loc = cmp.GARMIN_diary_closer_all == "local" & cmp.GARMIN_mismatch_1hr == 0;
+m_says_loc = cmp.MUSE_diary_closer_all   == "local" & cmp.MUSE_mismatch_1hr   == 0;
+ra_row = cmp.RA_changed ~= "";
+cmp.RA_entered_local = nan(height(cmp),1);
+cmp.RA_entered_local(ra_row & non_pst & (g_says_loc | m_says_loc)) = 0;
+cmp.RA_entered_local(ra_row & non_pst & (g_says_pst | m_says_pst)) = 1;
+ra_tz = cmp(ra_row & non_pst,:);
+fprintf('RA check (non-PST SIDs): %d RA-revised night(s); %d look LOCAL (missed the time zone), %d look PST, %d no usable device\n', ...
+    height(ra_tz), sum(ra_tz.RA_entered_local == 1), sum(ra_tz.RA_entered_local == 0), sum(isnan(ra_tz.RA_entered_local)));
+
+% Files kept on CRSP may have dates; set DEID = true only for copies sent outside the lab
+DEID = false;
+if DEID, deid = @deidentify_output; else, deid = @(x) x; end
+writetable(deid(modify_t),append(file_path,'\Sleep_diary\Sleep_diary_morning_modification_details.xlsx'),'WriteMode','replacefile')
 copy.date = datetime(copy.started_at/1000,"convertfrom","posixtime","Format","dd-MMM-yyyy","Timezone","local");
-copy.minutes_away_from_midnight_to_sleep_time = minutes(copy.first_sleep_pst - datetime(string(copy.date)+ " " + string(timeofday(datetime("00:00:00","inputformat","HH:mm:ss")))));
+copy.minutes_away_from_midnight_to_sleep_time = minutes(copy.bed_calc - datetime(string(copy.date)+ " " + string(timeofday(datetime("00:00:00","inputformat","HH:mm:ss")))));
 new = table;
 for j = 1:length(SID)
     t = copy(copy.SID == SID(j),:);
@@ -142,17 +203,17 @@ for j = 1:length(SID)
         tt = t(t.StudyWeek == sw(j),:);
         ttt = tt;
         ttt(isnan(ttt.sleep_duration),:) = [];
-        bed_time = timeofday(ttt.first_sleep_pst);
+        bed_time = timeofday(ttt.bed_calc);                             % local (or PST where flagged)
         bed_time(hours(bed_time)<18) = bed_time(hours(bed_time)<18) + hours(24);
-        tt{~isnan(tt.sleep_duration),"ave_bedtime"} = mean(bed_time);
-        tt{hours(tt.ave_bedtime)>24,"ave_bedtime"} = tt{hours(tt.ave_bedtime)>24,"ave_bedtime"} - hours(24);
-        tt{~isnan(tt.sleep_duration),"ave_waketime"} = mean(timeofday(ttt.get_out_of_bed_pst));
+        tt{~isnan(tt.sleep_duration),"ave_bedtime_local"} = mean(bed_time);
+        tt{hours(tt.ave_bedtime_local)>24,"ave_bedtime_local"} = tt{hours(tt.ave_bedtime_local)>24,"ave_bedtime_local"} - hours(24);
+        tt{~isnan(tt.sleep_duration),"ave_waketime_local"} = mean(timeofday(ttt.wake_calc));
         tt{~isnan(tt.sleep_duration),"ave_sleep_duration_in_mins"} = mean(ttt.sleep_duration_in_mins);
         tt{~isnan(tt.sleep_duration),"std_sleep_duration_in_mins"} = std(ttt.sleep_duration_in_mins);
         tt{~isnan(tt.sleep_duration),"z_score_sleep_duration_in_mins"} = round((ttt.sleep_duration_in_mins - mean(ttt.sleep_duration_in_mins))/std(ttt.sleep_duration_in_mins),2);
         tt{~isnan(tt.sleep_duration), "ave_sleep_duration"} = mean(ttt.sleep_duration);
-        tt{isnan(tt.sleep_duration),"ave_bedtime"} = nan;
-        tt{isnan(tt.sleep_duration),"ave_waketime"} = nan;
+        tt{isnan(tt.sleep_duration),"ave_bedtime_local"} = nan;
+        tt{isnan(tt.sleep_duration),"ave_waketime_local"} = nan;
         tt{isnan(tt.sleep_duration),"ave_sleep_duration_in_mins"} = nan;
         tt{isnan(tt.sleep_duration),"std_sleep_duration_in_mins"} = nan;
         tt{isnan(tt.sleep_duration),"z_score_sleep_duration_in_mins"} = nan;
@@ -161,16 +222,22 @@ for j = 1:length(SID)
     end
 end
 new.residual_from_ave_sleep_duration = new.sleep_duration_in_mins - new.ave_sleep_duration_in_mins;
-new{:,"bed_midpoint"} = mean(new{:,["get_out_of_bed_pst","first_sleep_pst"]},2);
-new.minutes_away_from_midnight_to_mid_point = minutes(new.bed_midpoint - datetime(string(new.date)+ " " + string(timeofday(datetime("00:00:00","inputformat","HH:mm:ss")))));
-new(:,"date") = [];
+new.bed_midpoint_local = new.bed_calc + (new.wake_calc - new.bed_calc)/2;   % local (or PST where flagged)
+new.minutes_away_from_midnight_to_mid_point = minutes(new.bed_midpoint_local - datetime(string(new.date)+ " " + string(timeofday(datetime("00:00:00","inputformat","HH:mm:ss")))));
+new(:,["date","bed_calc","wake_calc"]) = [];
 new(new.Day == 1,:) = [];
-% xlsx outputs: no dates/timestamps (Date -> yyyy-MM, bed/wake/midpoint -> HH:mm, unix + birth date removed)
-new_out = deidentify_output(new);
-writetable(new_out,append(file_path,'\Sleep_diary\Sleep_diary_morning_long.xlsx'),'WriteMode','replacefile');
+% xlsx outputs: full dates on CRSP; deidentified only if DEID = true
+new_out = deid(new);
+new_out(:,intersect("offset_h",string(new_out.Properties.VariableNames))) = [];
+xl = append(file_path,'\Sleep_diary\Sleep_diary_morning_long.xlsx');
+writetable(new_out,xl,'WriteMode','replacefile');
+% ---- device comparison sheets (raw; stays on CRSP) ---------------------------
+writetable(cmp,       xl,'Sheet','sleep_comparison');
+writetable(muse_off,  xl,'Sheet','MUSE_off');
+writetable(garmin_off,xl,'Sheet','GARMIN_off');
+writetable(ra_tz,     xl,'Sheet','RA_timezone_check');
 writetable(new_out,append(file_path,'\PSF master data.xlsx'),'Sheet','Sleep Diary Morning','WriteMode','overwritesheet');
-% .mat (analyst only) keeps full datetimes, as before
-new.Date = month(new.Date,'long');
+% .mat keeps full datetimes (Date stays a real date)
 drop_cols = intersect(["Blughbo","Blurghbo","Burst_Day_"],string(new.Properties.VariableNames));
 new(:,drop_cols) = [];
 save(append(file_path,'\Sleep_diary\Sleep_diary_morning_long.mat'),"new");
@@ -197,4 +264,4 @@ for i = 1:length(SID)
     end
 end
 writetable(wide,append(file_path,'\Sleep_diary\Sleep_diary_morning_wide.xlsx'),'WriteMode','replacefile');
-end
+end

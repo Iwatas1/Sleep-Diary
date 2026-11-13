@@ -145,6 +145,16 @@ if any(copy.sleep_duration_in_mins < 0)
 end
 writetable(deidentify_output(modify_t),fullfile(file_path,'Sleep_diary','Sleep_diary_morning_modification_details.xlsx'),'WriteMode','replacefile');
 
+% ---- device comparison (Garmin / Muse) ---------------------------------------
+% K08: everyone treated as Pacific (blank time zone = PST), so local = PST and all
+% timing stays PST. Pilot SIDs (moved between zones) are left out.
+PILOT = [];      % <-- set the pilot SIDs to exclude locally
+dev = copy(~ismember(copy.SID,PILOT),:);
+dev.time_zone            = repmat("PST",height(dev),1);
+dev.first_sleep_local    = dev.first_sleep_pst;
+dev.get_out_of_bed_local = dev.get_out_of_bed_pst;
+[cmp,muse_off,garmin_off] = bed_time_comparison_K08(dev,file_path);
+
 % ---- weekly summaries -----------------------------------------------------
 midnight = dateshift(copy.Date,'start','day');                 % midnight of the diary morning
 copy.minutes_away_from_midnight_to_sleep_time = minutes(copy.first_sleep_pst - midnight);
@@ -181,7 +191,12 @@ new.minutes_away_from_midnight_to_mid_point = minutes(new.bed_midpoint - dateshi
 % ---- outputs --------------------------------------------------------------
 save(fullfile(file_path,'Sleep_diary','morning.mat'),'new');          % analyst only: full datetimes
 new_out = deidentify_output(new);
-writetable(new_out,fullfile(file_path,'Sleep_diary','Sleep_diary_morning_long.xlsx'),'WriteMode','replacefile');
+xl = fullfile(file_path,'Sleep_diary','Sleep_diary_morning_long.xlsx');
+writetable(new_out,xl,'WriteMode','replacefile');
+% device comparison sheets (raw, full dates + unix; stays on CRSP)
+writetable(cmp,       xl,'Sheet','sleep_comparison');
+writetable(muse_off,  xl,'Sheet','MUSE_off');
+writetable(garmin_off,xl,'Sheet','GARMIN_off');
 writetable(new_out,fullfile(file_path,'K08 master data.xlsx'),'Sheet','Sleep Diary Morning','WriteMode','overwritesheet');
 
 wide = table;
