@@ -13,7 +13,7 @@ your local data folder before running anything.
 |---|---|---|
 | `PSF/` | ongoing study | RA checking is still in progress; the code also refreshes the RA workbook each run |
 | `K08/` | completed study | RA checks are final; the RA workbook is only read |
-| `T1D/` | multi-time-zone study | time zone and device comparison files only (morning diary) |
+| `T1D/` | multi-time-zone study | morning diary pipeline with time zone handling and device comparison |
 | `legacy/` | — | original single-script version, kept for reference |
 
 Each study folder is self-contained (put the folder on the MATLAB path / in `Sleep_diary\codes`).
