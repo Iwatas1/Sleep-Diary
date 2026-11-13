@@ -202,6 +202,13 @@ raw_tmpl   = template_cols(ra_file,info,"RAW");
 clean_tmpl = template_cols(ra_file,info,"CLEANED");
 today_tag  = string(datetime('today'),'MMddyyyy');
 SW_pipe = unique(pre_RA.StudyWeek(~isnan(pre_RA.StudyWeek))).';
+% time zone shown to the RA (times stay PST; local = PST + offset_h)
+has_tz = all(ismember(["time_zone","offset_h"],string(pre_RA.Properties.VariableNames)));
+if has_tz
+    tz_map = unique(pre_RA(~isnan(pre_RA.SID),["SID","time_zone","offset_h"]),'rows','stable');
+else
+    warning('apply_RA_fix: no time_zone/offset_h in the diary table - RA sheets get no time zone info.');
+end
 n_added = 0;
 rename_from = strings(1,0);  rename_to = strings(1,0);
 for w = SW_pipe
@@ -215,6 +222,7 @@ for w = SW_pipe
         r = r(r.sheet_date == max(r.sheet_date),:);
         raw_name = r.name(1);  raw_cols = sheet_cols(ra_file,raw_name);
     end
+    if has_tz, raw_cols = add_tz_cols(raw_cols); end
     writecell(to_sheet_cells(P,raw_cols,true),ra_file,'Sheet',raw_name,'WriteMode','overwritesheet');
     if strtrim(raw_name) ~= "SW" + w + " RAW_" + today_tag      % rename to today's date after all writes
         rename_from(end+1) = raw_name;  rename_to(end+1) = "SW" + w + " RAW_" + today_tag; %#ok<AGROW>
@@ -224,9 +232,12 @@ for w = SW_pipe
     c = info(info.SW == w & info.kind == "CLEANED",:);
     if isempty(c)
         new_rows = P;
-        writecell(to_sheet_cells(new_rows,clean_tmpl,true),ra_file,'Sheet',"SW" + w + " CLEANED_" + today_tag);
+        clean_cols = clean_tmpl;
+        if has_tz, clean_cols = add_tz_cols(clean_cols); end
+        writecell(to_sheet_cells(new_rows,clean_cols,true),ra_file,'Sheet',"SW" + w + " CLEANED_" + today_tag);
     else
         c = c(c.sheet_date == max(c.sheet_date),:);
+        if has_tz, insert_tz_into_sheet(ra_file,c.name(1),tz_map); end   % existing RA rows unchanged, only columns added
         fill_full_dates(ra_file,c.name(1),P);       % Date column only -> yyyy-MM-dd
         C = read_ra_sheet(ra_file,c.name(1));
         new_rows = P(~ismember(P(:,key),C(:,key)),:);
@@ -602,6 +613,59 @@ for j = 1:numel(cols)
     else
         out.(v) = strings(n,1);
     end
+end
+end
+
+function cols = add_tz_cols(cols)
+% put time_zone and offset_h right after SID if the layout doesn't have them yet
+cols = cols(~ismember(cols,["time_zone","offset_h"]));
+k = find(strtrim(cols) == "SID",1);
+if isempty(k), k = 0; end
+cols = [cols(1:k) "time_zone" "offset_h" cols(k+1:end)];
+end
+
+function insert_tz_into_sheet(f,s,tz_map)
+% add time_zone / offset_h columns (after SID) to an existing CLEANED sheet.
+% Uses Excel to INSERT the columns, so RA edits, notes and cell formatting/highlights
+% stay as they are. Needs Windows + Excel; otherwise skipped with a warning.
+C = readcell(f,'Sheet',s);
+if isempty(C), return, end
+hdr = strings(1,size(C,2));
+for j = 1:size(C,2)
+    if ischar(C{1,j}) || isstring(C{1,j}), hdr(j) = strtrim(string(C{1,j})); end
+end
+if any(hdr == "time_zone"), return, end
+k = find(hdr == "SID",1);
+if isempty(k), warning('apply_RA_fix: no SID column in "%s"; time zone not added.',s); return, end
+n = size(C,1);
+vals = cell(n,2);  vals(:) = {''};
+vals(1,:) = {'time_zone','offset_h'};
+for i = 2:n
+    r = find(tz_map.SID == cell_num(C{i,k}),1);
+    if ~isempty(r)
+        vals{i,1} = char(tz_map.time_zone(r));
+        if ~isnan(tz_map.offset_h(r)), vals{i,2} = tz_map.offset_h(r); end
+    end
+end
+try
+    excel = actxserver('Excel.Application');
+catch
+    warning('apply_RA_fix: Excel not available - time zone columns NOT added to "%s".',s);
+    return
+end
+cleanup = onCleanup(@() quit_excel(excel)); %#ok<NASGU>
+excel.DisplayAlerts = false;
+try
+    wb = excel.Workbooks.Open(char(f));
+    ws = wb.Worksheets.Item(char(s));
+    col = col_letter(k+1);
+    ws.Range([col ':' col_letter(k+2)]).EntireColumn.Insert;          % shift columns right
+    ws.Range(sprintf('%s1:%s%d',col,col_letter(k+2),n)).Value = vals;
+    wb.Save;
+    wb.Close(false);
+    fprintf('apply_RA_fix: added time_zone/offset_h to "%s"\n',s);
+catch ME
+    warning('apply_RA_fix: adding time zone to "%s" failed (%s).',s,ME.message);
 end
 end
 
