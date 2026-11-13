@@ -13,6 +13,7 @@ your local data folder before running anything.
 |---|---|---|
 | `PSF/` | ongoing study | RA checking is still in progress; the code also refreshes the RA workbook each run |
 | `K08/` | completed study | RA checks are final; the RA workbook is only read |
+| `T1D/` | multi-time-zone study | adds local vs PST times and a Garmin / Muse bed-wake comparison |
 | `legacy/` | — | original single-script version, kept for reference |
 
 Each study folder is self-contained (put the folder on the MATLAB path / in `Sleep_diary\codes`).
@@ -61,6 +62,25 @@ RAs check the times by hand in a workbook in `SleepDiaryDataCheck` (newest `.xls
 **K08 (completed).** Wide sheets (`SW# RAW`/`SW# CLEANED` and a later batch `NEW SW#` /
 `NEW SW# CLEANED`, columns suffixed `_2`–`_8`). For SID-weeks in both batches the `NEW` version
 is used. The workbook is read only.
+
+## T1D: time zones and device comparison
+
+Participants live in different US time zones (time zone sheet `demographics\T1D_timezones.xlsx`,
+column `TZ` = pst / mst / cst / est).
+
+- `add_local_time_T1D.m` builds `bed_time_local` / `wake_time_local` (participant clock) next to
+  `bed_time` / `wake_time` (PST).
+- `bed_time_comparison_T1D.m` pulls Garmin (Labfront `garmin-connect-sleep-summary`) and Muse
+  (largest `_ss.csv` per night) bed/wake, converts their unix timestamps to the participant's zone
+  and compares them with the device's own clock (`isoDate`, Muse `times`). Nights more than
+  30 min / 1 h off are flagged (`GARMIN_/MUSE_mismatch_30min/1hr`); flagged nights are then compared
+  with the diary local and PST times (`*_diary_closer`).
+- In `EMA_to_sleep_diary_morning.m` the midpoint and average bed/wake times use local time,
+  except on nights where every available device says the diary PST time fits better
+  (`calc_clock = "pst"`). Only `bed_time_PST` / `wake_time_PST` stay in PST in the xlsx.
+- `Sleep_diary_morning_long.xlsx` gets three extra sheets: `sleep_comparison`, `MUSE_off`,
+  `GARMIN_off`. These are not deidentified (full dates and unix timestamps); keep them on the lab
+  server.
 
 ## Deidentification
 
